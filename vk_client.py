@@ -26,7 +26,19 @@ class VkClient:
             headers = {
                 "User-Agent": "KateMobileAndroid/110.1 lite-535 (Android 14; SDK 34; arm64-v8a; Xiaomi 2201117TY; ru)"
             }
-            self.session = aiohttp.ClientSession(headers=headers, timeout=aiohttp.ClientTimeout(total=40))
+            connector = None
+            if config.PROXY_URL:
+                try:
+                    from aiohttp_socks import ProxyConnector
+                    connector = ProxyConnector.from_url(config.PROXY_URL)
+                except Exception as e:
+                    print(f"⚠️ Ошибка инициализации прокси: {e}")
+
+            self.session = aiohttp.ClientSession(
+                headers=headers,
+                connector=connector,
+                timeout=aiohttp.ClientTimeout(total=40)
+            )
         return self.session
 
     async def close(self):
@@ -48,8 +60,7 @@ class VkClient:
 
         for attempt in range(3):
             try:
-                proxy_param = config.PROXY_URL if config.PROXY_URL else None
-                async with session.post(f"https://api.vk.com/method/{method}", data=params, proxy=proxy_param) as resp:
+                async with session.post(f"https://api.vk.com/method/{method}", data=params) as resp:
                     data = await resp.json()
                     if "error" in data:
                         err = data["error"]
@@ -179,8 +190,7 @@ class VkClient:
         while True:
             url = f"https://{server}?act=a_check&key={key}&ts={ts}&wait=25&mode=2&version=10"
             try:
-                proxy_param = config.PROXY_URL if config.PROXY_URL else None
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=40), proxy=proxy_param) as resp:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=40)) as resp:
                     data = await resp.json()
                     if "failed" in data:
                         code = data["failed"]
