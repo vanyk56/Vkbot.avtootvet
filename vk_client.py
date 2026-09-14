@@ -22,7 +22,10 @@ class VkClient:
 
     async def get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=40))
+            headers = {
+                "User-Agent": "KateMobileAndroid/110.1 lite-535 (Android 14; SDK 34; arm64-v8a; Xiaomi 2201117TY; ru)"
+            }
+            self.session = aiohttp.ClientSession(headers=headers, timeout=aiohttp.ClientTimeout(total=40))
         return self.session
 
     async def close(self):

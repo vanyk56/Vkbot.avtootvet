@@ -107,21 +107,28 @@ async def main():
     # 3. Создание клиента VK
     vk = VkClient(VK_TOKEN)
 
-    # 4. Определение владельца аккаунта
-    owner_id = OWNER_ID
-    try:
-        user_info = await vk.api_call("users.get")
-        if user_info and len(user_info) > 0:
-            owner_id = user_info[0]["id"]
-            user_name = f"{user_info[0]['first_name']} {user_info[0]['last_name']}"
-            print(f"👤 Авторизован как: {user_name} (ID: {owner_id})")
-        else:
-            print("⚠️ Не удалось получить информацию о пользователе. Проверьте токен.")
-            return
-    except Exception as e:
-        print(f"❌ Не удалось подключиться к VK API: {e}")
-        await vk.close()
-        return
+    # 4. Определение владельца аккаунта с автоповтором при Flood Control
+    owner_id = OWNER_ID or 1060180749
+    connected = False
+
+    while not connected:
+        try:
+            user_info = await vk.api_call("users.get")
+            if user_info and len(user_info) > 0:
+                owner_id = user_info[0]["id"]
+                user_name = f"{user_info[0]['first_name']} {user_info[0]['last_name']}"
+                print(f"👤 Авторизован как: {user_name} (ID: {owner_id})")
+            else:
+                print(f"👤 Владелец ID: {owner_id}")
+            connected = True
+        except Exception as e:
+            if "Flood control" in str(e) or "9" in str(e):
+                print("⏳ ВКонтакте временно включил защиту Flood Control (защита от частых запросов).")
+                print("   Бот не закрывается и повторит попытку через 30 секунд...")
+                await asyncio.sleep(30)
+            else:
+                print(f"⚠️ Ошибка подключения к VK API: {e}. Повтор через 20 секунд...")
+                await asyncio.sleep(20)
 
     current_prefix = await db.get_setting("prefix", DEFAULT_PREFIX)
     print(f"🔧 Текущий префикс команд: {current_prefix}")
@@ -137,105 +144,114 @@ async def main():
     print("⚡ Фоновые модули (Ферма, Цтаймер, Адвд, Собачки, Отписка) запущены.")
     print("👂 Подключение к User LongPoll... Бот готов к работе!\n")
 
-    # 6. Основной цикл LongPoll
+    # 6. Основной цикл LongPoll с авто-восстановлением
     try:
-        async for event in vk.longpoll_stream():
-            # Событие 4: Новое сообщение
-            # Формат события: [4, message_id, flags, peer_id, timestamp, text, extra, attachments, random_id]
-            if event[0] != 4:
-                continue
-
-            message_id = event[1]
-            flags = event[2]
-            peer_id = event[3]
-            timestamp = float(event[4])
-            text = str(event[5]) if len(event) > 5 else ""
-            extra = event[6] if len(event) > 6 and isinstance(event[6], dict) else {}
-
-            is_outbox = bool(flags & 2)
-
-            # Определяем отправителя
-            if is_outbox:
-                from_id = owner_id
-                # Сохраняем ID сообщения владельца в историю чата для удалялки
-                if peer_id not in OWNER_MESSAGE_HISTORY:
-                    OWNER_MESSAGE_HISTORY[peer_id] = []
-                OWNER_MESSAGE_HISTORY[peer_id].append(message_id)
-                if len(OWNER_MESSAGE_HISTORY[peer_id]) > 30:
-                    OWNER_MESSAGE_HISTORY[peer_id].pop(0)
-            else:
-                from_id = int(extra.get("from", peer_id))
-
-            # Проверка списка игнорируемых
-            if await db.is_in_list("ignore", from_id):
-                try:
-                    await vk.delete_msg(message_id)
-                except Exception:
-                    pass
-                continue
-
-            # Обработка автовыхода, автопушей и автоответчика
-            if not is_outbox:
-                await handle_auto_reply_event(vk, peer_id, from_id, owner_id)
-                await handle_auto_push_event(vk, peer_id, message_id, text, from_id, owner_id)
-                await handle_auto_exit_event(vk, peer_id, from_id, owner_id, extra)
-
-            # Проверка стоп-слова удалялки (для исходящих сообщений владельца)
-            if is_outbox and text.strip():
-                raw_words = await db.get_setting("stop_delete_words", '["дд"]')
-                stop_words = json.loads(raw_words)
-                if text.strip().lower() in [w.lower() for w in stop_words]:
-                    # Удаляем текущее сообщение-триггер и последние 2 сообщения владельца
-                    to_delete = [message_id]
-                    recent = OWNER_MESSAGE_HISTORY.get(peer_id, [])
-                    if len(recent) > 1:
-                        to_delete.extend(recent[-3:])
-                    await vk.delete_msg(list(set(to_delete)))
-                    continue
-
-            # Проверка прав на выполнение команд бота
-            # Команды может вызывать владелец, либо доверенные (довы), если включен режим «дежурный»
-            can_execute = False
-            if is_outbox or from_id == owner_id:
-                can_execute = True
-            else:
-                is_duty = await db.get_bool_setting("duty")
-                if is_duty and await db.is_in_list("trusted", from_id):
-                    can_execute = True
-
-            if not can_execute:
-                continue
-
-            # Проверка совпадения префикса
-            prefix = await db.get_setting("prefix", DEFAULT_PREFIX)
-            text_stripped = text.strip()
-
-            if not text_stripped.lower().startswith(prefix.lower()):
-                continue
-
-            # Отрезаем префикс и получаем команду с аргументами
-            body = text_stripped[len(prefix):].strip()
-            if not body:
-                continue
-
-            parts = body.split(maxsplit=1)
-            cmd_name = parts[0]
-            cmd_args = parts[1] if len(parts) > 1 else ""
-
-            # Запуск обработки команды
+        while True:
             try:
-                await route_command(
-                    vk=vk,
-                    peer_id=peer_id,
-                    message_id=message_id,
-                    cmd_name=cmd_name,
-                    args=cmd_args,
-                    owner_id=owner_id,
-                    msg_timestamp=timestamp,
-                    raw_event=event
-                )
+                async for event in vk.longpoll_stream():
+                    # Событие 4: Новое сообщение
+                    # Формат события: [4, message_id, flags, peer_id, timestamp, text, extra, attachments, random_id]
+                    if event[0] != 4:
+                        continue
+
+                    message_id = event[1]
+                    flags = event[2]
+                    peer_id = event[3]
+                    timestamp = float(event[4])
+                    text = str(event[5]) if len(event) > 5 else ""
+                    extra = event[6] if len(event) > 6 and isinstance(event[6], dict) else {}
+
+                    is_outbox = bool(flags & 2)
+
+                    # Определяем отправителя
+                    if is_outbox:
+                        from_id = owner_id
+                        # Сохраняем ID сообщения владельца в историю чата для удалялки
+                        if peer_id not in OWNER_MESSAGE_HISTORY:
+                            OWNER_MESSAGE_HISTORY[peer_id] = []
+                        OWNER_MESSAGE_HISTORY[peer_id].append(message_id)
+                        if len(OWNER_MESSAGE_HISTORY[peer_id]) > 30:
+                            OWNER_MESSAGE_HISTORY[peer_id].pop(0)
+                    else:
+                        from_id = int(extra.get("from", peer_id))
+
+                    # Проверка списка игнорируемых
+                    if await db.is_in_list("ignore", from_id):
+                        try:
+                            await vk.delete_msg(message_id)
+                        except Exception:
+                            pass
+                        continue
+
+                    # Обработка автовыхода, автопушей и автоответчика
+                    if not is_outbox:
+                        await handle_auto_reply_event(vk, peer_id, from_id, owner_id)
+                        await handle_auto_push_event(vk, peer_id, message_id, text, from_id, owner_id)
+                        await handle_auto_exit_event(vk, peer_id, from_id, owner_id, extra)
+
+                    # Проверка стоп-слова удалялки (для исходящих сообщений владельца)
+                    if is_outbox and text.strip():
+                        raw_words = await db.get_setting("stop_delete_words", '["дд"]')
+                        stop_words = json.loads(raw_words)
+                        if text.strip().lower() in [w.lower() for w in stop_words]:
+                            # Удаляем текущее сообщение-триггер и последние 2 сообщения владельца
+                            to_delete = [message_id]
+                            recent = OWNER_MESSAGE_HISTORY.get(peer_id, [])
+                            if len(recent) > 1:
+                                to_delete.extend(recent[-3:])
+                            await vk.delete_msg(list(set(to_delete)))
+                            continue
+
+                    # Проверка прав на выполнение команд бота
+                    # Команды может вызывать владелец, либо доверенные (довы), если включен режим «дежурный»
+                    can_execute = False
+                    if is_outbox or from_id == owner_id:
+                        can_execute = True
+                    else:
+                        is_duty = await db.get_bool_setting("duty")
+                        if is_duty and await db.is_in_list("trusted", from_id):
+                            can_execute = True
+
+                    if not can_execute:
+                        continue
+
+                    # Проверка совпадения префикса
+                    prefix = await db.get_setting("prefix", DEFAULT_PREFIX)
+                    text_stripped = text.strip()
+
+                    if not text_stripped.lower().startswith(prefix.lower()):
+                        continue
+
+                    # Отрезаем префикс и получаем команду с аргументами
+                    body = text_stripped[len(prefix):].strip()
+                    if not body:
+                        continue
+
+                    parts = body.split(maxsplit=1)
+                    cmd_name = parts[0]
+                    cmd_args = parts[1] if len(parts) > 1 else ""
+
+                    # Запуск обработки команды
+                    try:
+                        await route_command(
+                            vk=vk,
+                            peer_id=peer_id,
+                            message_id=message_id,
+                            cmd_name=cmd_name,
+                            args=cmd_args,
+                            owner_id=owner_id,
+                            msg_timestamp=timestamp,
+                            raw_event=event
+                        )
+                    except Exception as e:
+                        print(f"⚠️ Ошибка выполнения команды «{cmd_name}»: {e}")
             except Exception as e:
-                print(f"⚠️ Ошибка выполнения команды «{cmd_name}»: {e}")
+                if "Flood control" in str(e) or "9" in str(e):
+                    print("⏳ Временный Flood Control при подключении к LongPoll. Ожидание 30 сек...")
+                    await asyncio.sleep(30)
+                else:
+                    print(f"⚠️ Сбой LongPoll соединения: {e}. Переподключение через 10 сек...")
+                    await asyncio.sleep(10)
 
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n🛑 Завершение работы бота...")
