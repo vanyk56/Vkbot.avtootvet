@@ -13,7 +13,12 @@ DEFAULT_PREFIX = os.getenv("DEFAULT_PREFIX", "нб").strip().lower()
 OWNER_ID_STR = os.getenv("OWNER_ID", "").strip()
 OWNER_ID = int(OWNER_ID_STR) if OWNER_ID_STR.isdigit() else 0
 
-# Поддержка Railway Volume / переменной DATA_DIR для сохранения базы данных между перезапусками
+# Поддержка облачной базы данных Neon (PostgreSQL)
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Поддержка локальной SQLite / Railway Volume
 DATA_DIR = os.getenv("DATA_DIR", "").strip()
 if DATA_DIR:
     os.makedirs(DATA_DIR, exist_ok=True)
