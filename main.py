@@ -107,28 +107,21 @@ async def main():
     # 3. Создание клиента VK
     vk = VkClient(VK_TOKEN)
 
-    # 4. Определение владельца аккаунта с автоповтором при Flood Control
+    # 4. Определение владельца аккаунта
     owner_id = OWNER_ID or 1060180749
-    connected = False
-
-    while not connected:
+    if OWNER_ID:
+        owner_id = OWNER_ID
+        print(f"👤 Владелец ID: {owner_id} (из конфигурации)")
+    else:
         try:
             user_info = await vk.api_call("users.get")
             if user_info and len(user_info) > 0:
                 owner_id = user_info[0]["id"]
                 user_name = f"{user_info[0]['first_name']} {user_info[0]['last_name']}"
                 print(f"👤 Авторизован как: {user_name} (ID: {owner_id})")
-            else:
-                print(f"👤 Владелец ID: {owner_id}")
-            connected = True
-        except Exception as e:
-            if "Flood control" in str(e) or "9" in str(e):
-                print("⏳ ВКонтакте временно включил защиту Flood Control (защита от частых запросов).")
-                print("   Бот не закрывается и повторит попытку через 30 секунд...")
-                await asyncio.sleep(30)
-            else:
-                print(f"⚠️ Ошибка подключения к VK API: {e}. Повтор через 20 секунд...")
-                await asyncio.sleep(20)
+        except Exception:
+            owner_id = 1060180749
+            print(f"👤 Владелец ID: {owner_id}")
 
     current_prefix = await db.get_setting("prefix", DEFAULT_PREFIX)
     print(f"🔧 Текущий префикс команд: {current_prefix}")
