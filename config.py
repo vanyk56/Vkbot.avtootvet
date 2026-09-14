@@ -26,6 +26,9 @@ if DATA_DIR:
 else:
     DB_PATH = str(BASE_DIR / os.getenv("DB_PATH", "bot.db"))
 
+# Опциональный прокси (например, http://login:pass@ip:port)
+PROXY_URL = os.getenv("PROXY_URL", "").strip()
+
 # VK API версия
 VK_API_VERSION = "5.199"
 

@@ -3,6 +3,7 @@ import aiohttp
 import re
 import time
 from typing import Optional, Dict, Any, List, Union
+import config
 from config import VK_API_VERSION
 
 class VkApiError(Exception):
@@ -47,7 +48,8 @@ class VkClient:
 
         for attempt in range(3):
             try:
-                async with session.post(f"https://api.vk.com/method/{method}", data=params) as resp:
+                proxy_param = config.PROXY_URL if config.PROXY_URL else None
+                async with session.post(f"https://api.vk.com/method/{method}", data=params, proxy=proxy_param) as resp:
                     data = await resp.json()
                     if "error" in data:
                         err = data["error"]
@@ -177,7 +179,8 @@ class VkClient:
         while True:
             url = f"https://{server}?act=a_check&key={key}&ts={ts}&wait=25&mode=2&version=10"
             try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=40)) as resp:
+                proxy_param = config.PROXY_URL if config.PROXY_URL else None
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=40), proxy=proxy_param) as resp:
                     data = await resp.json()
                     if "failed" in data:
                         code = data["failed"]
